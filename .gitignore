@@ -1,0 +1,43 @@
+# various outputs and binaries
+*.a
+*.d
+*.o
+*.elf
+*.exe
+*.hex
+*.lst
+*.map
+*.obj
+*.out
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# MSDK build system cruft
+*project_defines.h
+*_empty_tmp_file.c
+*ln_args.txt
+*ar_args.txt
+*build/
+
+# eclipse stuff that we don't want
+*.cproject
+*.project
+*.launch
+*.settings
+
+# misc stuff we don't want to sneak in here
+*.DS_Store
+*metadata/
+*.log
+*__pycache__
+*.wav
+*/out/
+*.csv
+*.xyrs
+*.xml
+*.stackdump
+
+# ignore .vscode folders at the very root of the project, these are not supposed to be here
+/.vscode/
