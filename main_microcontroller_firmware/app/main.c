@@ -141,9 +141,10 @@ static uint8_t output_msgBuffer[OUTPUT_MSG_BUFFER_SIZE];
 static volatile bool isAlarmTriggered = false;
 
 // DS3231 interrupt configuration - must be static/global to persist
+// Uses P1.22 which is connected to DS3231 INT/SQW pin
 static mxc_gpio_cfg_t rtc_int_cfg = {
-    .port = MXC_GPIO0,
-    .mask = MXC_GPIO_PIN_13,
+    .port = MXC_GPIO1,
+    .mask = MXC_GPIO_PIN_22,
     .pad = MXC_GPIO_PAD_WEAK_PULL_UP,
     .func = MXC_GPIO_FUNC_IN,
     .vssel = MXC_GPIO_VSSEL_VDDIOH,
@@ -1431,6 +1432,9 @@ static void sync_RTC_to_DS3231(void)
         printf((char*)output_msgBuffer);
     }
 
+    //Configure Interrupt pin for RTC
+    MXC_GPIO_Config(&bsp_pins_rtc_int_cfg);
+
     // Set DS3231 alarm ALARM_SYNC_DELAY_S seconds from now
     struct tm alarmTime = {
         .tm_year = ds3231_datetime.tm_year,
@@ -1470,26 +1474,25 @@ static void sync_RTC_to_DS3231(void)
     }
 
     // Now enable DS3231 interrupt AFTER setting the alarm
-    enable_DS3231_Interrupt();
+    enable_DS3231_Interrupt();    
 
     printf("Waiting for DS3231 alarm to sync internal RTC...\n");
     
     // Wait for alarm with timeout
     uint32_t timeout_count = 0;
-    (void)MXC_GPIO_InGet(MXC_GPIO0, MXC_GPIO_PIN_13); // Read initial state (unused but kept for debugging)
+    (void)MXC_GPIO_InGet(MXC_GPIO1, MXC_GPIO_PIN_22); // Read initial state (unused but kept for debugging)
     
     while(!isAlarmTriggered && timeout_count < (SYNC_TIMEOUT_MS / 100)) {
         MXC_Delay(MXC_DELAY_MSEC(100));
         timeout_count++;
         
-        // // Check if pin state changed (for debugging)
-        uint32_t current_pin_state = MXC_GPIO_InGet(MXC_GPIO0, MXC_GPIO_PIN_13);
-        // if (current_pin_state != last_pin_state) {
-        //     printf("P0.13 state changed: %s -> %s\n", 
-        //            last_pin_state ? "HIGH" : "LOW",
-        //            current_pin_state ? "HIGH" : "LOW");
-        //     last_pin_state = current_pin_state;
-        // }
+        // Check if alarm was triggered during the delay
+        if (isAlarmTriggered) {
+            break;
+        }
+        
+        // Check if pin state changed (for debugging)
+        uint32_t current_pin_state = MXC_GPIO_InGet(MXC_GPIO1, MXC_GPIO_PIN_22);
         
         // Check DS3231 status register every 2 seconds to see if alarm flag is set
         if (timeout_count % 20 == 0 && timeout_count > 0) {
@@ -1500,7 +1503,7 @@ static void sync_RTC_to_DS3231(void)
         
         // Print progress every second
         if (timeout_count % 10 == 0) {
-            printf("Waiting... (%d seconds) [P0.13=%s]\n", 
+            printf("Waiting... (%d seconds) [P1.22=%s]\n", 
                    timeout_count / 10, current_pin_state ? "HIGH" : "LOW");
             status_led_toggle(STATUS_LED_COLOR_BLUE);
             status_led_toggle(STATUS_LED_COLOR_GREEN);                
@@ -1538,11 +1541,11 @@ static void reset_MAX_RTC(int hour, int minute, int sec)
 
 static void enable_DS3231_Interrupt(void)
 {
-    printf("Configuring DS3231 interrupt on GPIO P0.13...\n");
+    printf("Configuring DS3231 interrupt on GPIO P1.22...\n");
     
     // Read the pin state before configuration
-    uint32_t pin_state_before = MXC_GPIO_InGet(MXC_GPIO0, MXC_GPIO_PIN_13);
-    printf("P0.13 state before config: %s\n", pin_state_before ? "HIGH" : "LOW");
+    uint32_t pin_state_before = MXC_GPIO_InGet(MXC_GPIO1, MXC_GPIO_PIN_22);
+    printf("P1.22 state before config: %s\n", pin_state_before ? "HIGH" : "LOW");
     
     // Configure the GPIO pin (rtc_int_cfg is now static/global)
     MXC_GPIO_Config(&rtc_int_cfg);
@@ -1559,20 +1562,18 @@ static void enable_DS3231_Interrupt(void)
     // Enable the interrupt
     MXC_GPIO_EnableInt(rtc_int_cfg.port, rtc_int_cfg.mask);
     
-    // Enable the NVIC interrupt for GPIO0 (shared with pushbutton)
-    // Use the proper method to get the IRQ number for the GPIO port
-    // Note: This is safe to call multiple times - NVIC handles it properly
+    // Enable the NVIC interrupt for GPIO1
     NVIC_EnableIRQ(MXC_GPIO_GET_IRQ(MXC_GPIO_GET_IDX(rtc_int_cfg.port)));
     
-    printf("DS3231 interrupt configured successfully on P0.13 with pull-up\n");
+    printf("DS3231 interrupt configured successfully on P1.22 with pull-up\n");
     
     // Read the current pin state after configuration
-    uint32_t pin_state_after = MXC_GPIO_InGet(MXC_GPIO0, MXC_GPIO_PIN_13);
-    printf("P0.13 state after config: %s\n", pin_state_after ? "HIGH" : "LOW");
+    uint32_t pin_state_after = MXC_GPIO_InGet(MXC_GPIO1, MXC_GPIO_PIN_22);
+    printf("P1.22 state after config: %s\n", pin_state_after ? "HIGH" : "LOW");
     
     // If the pin is already LOW, the alarm might have already triggered
     if (!pin_state_after) {
-        printf("WARNING: P0.13 is LOW after config - alarm may have already triggered!\n");
+        printf("WARNING: P1.22 is LOW after config - alarm may have already triggered!\n");
     }
 }
 
@@ -1585,7 +1586,7 @@ static void ds3231_ISR(void *cbdata)
     }
     
     // Check current pin state to determine which edge triggered
-    uint32_t pin_state = MXC_GPIO_InGet(MXC_GPIO0, MXC_GPIO_PIN_13);
+    uint32_t pin_state = MXC_GPIO_InGet(MXC_GPIO1, MXC_GPIO_PIN_22);
     printf("DS3231 interrupt triggered! Pin state: %s\n", pin_state ? "HIGH" : "LOW");
     
     // Clear GPIO interrupt flags first
@@ -1635,6 +1636,12 @@ void RTC_IRQHandler(void)
     // Handle internal RTC interrupts if needed
     int flags = MXC_RTC_GetFlags();
     MXC_RTC_ClearFlags(flags);
+}
+
+void GPIO1_IRQHandler(void)
+{
+    // Handle GPIO1 interrupts (includes DS3231 RTC interrupt on P1.22)
+    MXC_GPIO_Handler(MXC_GPIO_GET_IDX(MXC_GPIO1));
 }
 
 static uint32_t get_internal_RTC_time(void *buff, void *strbuff)
